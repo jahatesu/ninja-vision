@@ -6,15 +6,40 @@ import math
 # =========================================================
 
 LANDMARK_COUNT = 21
-
 FEATURES_PER_HAND = 63
 
-# Important fingertip landmark indices
+WRIST = 0
+
+# Thumb
+THUMB_CMC = 1
+THUMB_MCP = 2
+THUMB_IP = 3
 THUMB_TIP = 4
+
+# Index
+INDEX_MCP = 5
+INDEX_PIP = 6
+INDEX_DIP = 7
 INDEX_TIP = 8
+
+# Middle
+MIDDLE_MCP = 9
+MIDDLE_PIP = 10
+MIDDLE_DIP = 11
 MIDDLE_TIP = 12
+
+# Ring
+RING_MCP = 13
+RING_PIP = 14
+RING_DIP = 15
 RING_TIP = 16
+
+# Pinky
+PINKY_MCP = 17
+PINKY_PIP = 18
+PINKY_DIP = 19
 PINKY_TIP = 20
+
 
 FINGERTIP_INDICES = [
     THUMB_TIP,
@@ -26,38 +51,155 @@ FINGERTIP_INDICES = [
 
 
 # =========================================================
-# Basic math
+# Basic vector math
 # =========================================================
+
+def vector_between(point_a, point_b):
+    """
+    Return vector A -> B.
+    """
+
+    return (
+        point_b.x - point_a.x,
+        point_b.y - point_a.y,
+        point_b.z - point_a.z,
+    )
+
+
+def vector_length(vector):
+    return math.sqrt(
+        vector[0] ** 2
+        + vector[1] ** 2
+        + vector[2] ** 2
+    )
+
 
 def distance_3d(point_a, point_b):
     """
-    Calculate Euclidean distance between two MediaPipe
-    landmarks.
+    Euclidean distance between two MediaPipe landmarks.
     """
 
-    return math.sqrt(
-        (point_a.x - point_b.x) ** 2
-        + (point_a.y - point_b.y) ** 2
-        + (point_a.z - point_b.z) ** 2
+    return vector_length(
+        vector_between(
+            point_a,
+            point_b,
+        )
+    )
+
+
+def dot_product(vector_a, vector_b):
+    return (
+        vector_a[0] * vector_b[0]
+        + vector_a[1] * vector_b[1]
+        + vector_a[2] * vector_b[2]
+    )
+
+
+def cross_product(vector_a, vector_b):
+    return (
+        vector_a[1] * vector_b[2]
+        - vector_a[2] * vector_b[1],
+
+        vector_a[2] * vector_b[0]
+        - vector_a[0] * vector_b[2],
+
+        vector_a[0] * vector_b[1]
+        - vector_a[1] * vector_b[0],
+    )
+
+
+def normalize_vector(vector):
+    length = vector_length(vector)
+
+    if length < 1e-8:
+        return (0.0, 0.0, 0.0)
+
+    return (
+        vector[0] / length,
+        vector[1] / length,
+        vector[2] / length,
+    )
+
+
+def angle_between_vectors(
+    vector_a,
+    vector_b,
+):
+    """
+    Return the angle between two vectors normalized to 0–1.
+
+    0.0 = 0 degrees
+    0.5 = 90 degrees
+    1.0 = 180 degrees
+    """
+
+    length_a = vector_length(vector_a)
+    length_b = vector_length(vector_b)
+
+    if (
+        length_a < 1e-8
+        or length_b < 1e-8
+    ):
+        return 0.0
+
+    cosine = (
+        dot_product(
+            vector_a,
+            vector_b,
+        )
+        / (length_a * length_b)
+    )
+
+    # Floating-point protection.
+    cosine = max(
+        -1.0,
+        min(1.0, cosine),
+    )
+
+    angle = math.acos(cosine)
+
+    return angle / math.pi
+
+
+def joint_angle(
+    point_a,
+    point_b,
+    point_c,
+):
+    """
+    Calculate the angle A-B-C.
+
+    B is the joint being measured.
+
+    Returns normalized angle 0–1.
+    """
+
+    vector_ba = vector_between(
+        point_b,
+        point_a,
+    )
+
+    vector_bc = vector_between(
+        point_b,
+        point_c,
+    )
+
+    return angle_between_vectors(
+        vector_ba,
+        vector_bc,
     )
 
 
 # =========================================================
-# Single-hand normalization
+# Hand normalization
 # =========================================================
 
 def normalize_hand_landmarks(landmarks):
     """
-    Convert 21 MediaPipe hand landmarks into 63 normalized
-    features.
+    Convert one hand into 63 normalized coordinates.
 
-    Normalization:
-    - Wrist becomes the origin.
-    - Coordinates are translated relative to the wrist.
-    - Coordinates are scale-normalized.
-
-    Returns:
-        63 floats
+    The wrist becomes the origin and the hand is normalized
+    by its maximum landmark distance from the wrist.
     """
 
     if landmarks is None:
@@ -69,46 +211,32 @@ def normalize_hand_landmarks(landmarks):
             f"received {len(landmarks)}."
         )
 
-    wrist = landmarks[0]
+    wrist = landmarks[WRIST]
 
     relative_landmarks = []
 
     for landmark in landmarks:
-        relative_x = landmark.x - wrist.x
-        relative_y = landmark.y - wrist.y
-        relative_z = landmark.z - wrist.z
 
         relative_landmarks.append(
             (
-                relative_x,
-                relative_y,
-                relative_z,
+                landmark.x - wrist.x,
+                landmark.y - wrist.y,
+                landmark.z - wrist.z,
             )
         )
 
-    # -----------------------------------------------------
-    # Determine hand scale
-    # -----------------------------------------------------
-
     max_distance = max(
-        math.sqrt(
-            x ** 2
-            + y ** 2
-            + z ** 2
-        )
-        for x, y, z in relative_landmarks
+        vector_length(point)
+        for point in relative_landmarks
     )
 
     if max_distance < 1e-8:
         max_distance = 1.0
 
-    # -----------------------------------------------------
-    # Flatten
-    # -----------------------------------------------------
-
     features = []
 
     for x, y, z in relative_landmarks:
+
         features.extend(
             [
                 x / max_distance,
@@ -126,17 +254,18 @@ def normalize_hand_landmarks(landmarks):
 
 def get_hand_scale(landmarks):
     """
-    Estimate hand size.
+    Estimate hand scale using wrist -> middle MCP.
 
-    Uses wrist-to-middle-fingertip distance.
+    Using the MCP instead of the fingertip makes the scale
+    less affected by whether the middle finger is bent.
     """
 
     if landmarks is None:
         return 1.0
 
     scale = distance_3d(
-        landmarks[0],
-        landmarks[MIDDLE_TIP],
+        landmarks[WRIST],
+        landmarks[MIDDLE_MCP],
     )
 
     if scale < 1e-8:
@@ -146,7 +275,327 @@ def get_hand_scale(landmarks):
 
 
 # =========================================================
-# Inter-hand features
+# Finger curl
+# =========================================================
+
+def calculate_finger_curl_features(
+    landmarks,
+):
+    """
+    Describe how curled each finger is.
+
+    Four measurements are produced per finger:
+
+        MCP angle
+        PIP angle
+        DIP/IP angle
+        fingertip-to-wrist distance
+
+    5 fingers × 4 = 20 features per hand.
+
+    Two hands = 40 features.
+
+    Missing hand = zeros.
+    """
+
+    if landmarks is None:
+        return [0.0] * 20
+
+    hand_scale = get_hand_scale(
+        landmarks
+    )
+
+    finger_chains = [
+        # Thumb
+        (
+            THUMB_CMC,
+            THUMB_MCP,
+            THUMB_IP,
+            THUMB_TIP,
+        ),
+
+        # Index
+        (
+            INDEX_MCP,
+            INDEX_PIP,
+            INDEX_DIP,
+            INDEX_TIP,
+        ),
+
+        # Middle
+        (
+            MIDDLE_MCP,
+            MIDDLE_PIP,
+            MIDDLE_DIP,
+            MIDDLE_TIP,
+        ),
+
+        # Ring
+        (
+            RING_MCP,
+            RING_PIP,
+            RING_DIP,
+            RING_TIP,
+        ),
+
+        # Pinky
+        (
+            PINKY_MCP,
+            PINKY_PIP,
+            PINKY_DIP,
+            PINKY_TIP,
+        ),
+    ]
+
+    features = []
+
+    for (
+        base,
+        joint_1,
+        joint_2,
+        tip,
+    ) in finger_chains:
+
+        # Angle at first joint.
+        angle_1 = joint_angle(
+            landmarks[base],
+            landmarks[joint_1],
+            landmarks[joint_2],
+        )
+
+        # Angle at second joint.
+        angle_2 = joint_angle(
+            landmarks[joint_1],
+            landmarks[joint_2],
+            landmarks[tip],
+        )
+
+        # Overall finger bend.
+        overall_angle = joint_angle(
+            landmarks[WRIST],
+            landmarks[base],
+            landmarks[tip],
+        )
+
+        # Tip distance from wrist.
+        tip_distance = (
+            distance_3d(
+                landmarks[WRIST],
+                landmarks[tip],
+            )
+            / hand_scale
+        )
+
+        features.extend(
+            [
+                angle_1,
+                angle_2,
+                overall_angle,
+                tip_distance,
+            ]
+        )
+
+    return features
+
+
+# =========================================================
+# Additional joint-angle features
+# =========================================================
+
+def calculate_joint_angle_features(
+    landmarks,
+):
+    """
+    Additional structural finger angles.
+
+    8 features per hand.
+    16 for both hands.
+    """
+
+    if landmarks is None:
+        return [0.0] * 8
+
+    features = [
+        # Thumb relationships
+        joint_angle(
+            landmarks[WRIST],
+            landmarks[THUMB_CMC],
+            landmarks[THUMB_MCP],
+        ),
+
+        joint_angle(
+            landmarks[THUMB_CMC],
+            landmarks[THUMB_MCP],
+            landmarks[THUMB_TIP],
+        ),
+
+        # Index
+        joint_angle(
+            landmarks[WRIST],
+            landmarks[INDEX_MCP],
+            landmarks[INDEX_TIP],
+        ),
+
+        # Middle
+        joint_angle(
+            landmarks[WRIST],
+            landmarks[MIDDLE_MCP],
+            landmarks[MIDDLE_TIP],
+        ),
+
+        # Ring
+        joint_angle(
+            landmarks[WRIST],
+            landmarks[RING_MCP],
+            landmarks[RING_TIP],
+        ),
+
+        # Pinky
+        joint_angle(
+            landmarks[WRIST],
+            landmarks[PINKY_MCP],
+            landmarks[PINKY_TIP],
+        ),
+
+        # Index-middle spread
+        angle_between_vectors(
+            vector_between(
+                landmarks[WRIST],
+                landmarks[INDEX_TIP],
+            ),
+            vector_between(
+                landmarks[WRIST],
+                landmarks[MIDDLE_TIP],
+            ),
+        ),
+
+        # Ring-pinky spread
+        angle_between_vectors(
+            vector_between(
+                landmarks[WRIST],
+                landmarks[RING_TIP],
+            ),
+            vector_between(
+                landmarks[WRIST],
+                landmarks[PINKY_TIP],
+            ),
+        ),
+    ]
+
+    return features
+
+
+# =========================================================
+# Within-hand fingertip distances
+# =========================================================
+
+def calculate_fingertip_distance_features(
+    landmarks,
+):
+    """
+    Measure distances between neighboring fingertips.
+
+    5 per hand.
+    10 total.
+    """
+
+    if landmarks is None:
+        return [0.0] * 5
+
+    scale = get_hand_scale(
+        landmarks
+    )
+
+    pairs = [
+        (THUMB_TIP, INDEX_TIP),
+        (INDEX_TIP, MIDDLE_TIP),
+        (MIDDLE_TIP, RING_TIP),
+        (RING_TIP, PINKY_TIP),
+        (THUMB_TIP, PINKY_TIP),
+    ]
+
+    return [
+        distance_3d(
+            landmarks[first],
+            landmarks[second],
+        ) / scale
+        for first, second in pairs
+    ]
+
+
+# =========================================================
+# Palm orientation
+# =========================================================
+
+def calculate_palm_normal(
+    landmarks,
+):
+    """
+    Estimate palm normal using:
+
+        wrist -> index MCP
+        wrist -> pinky MCP
+
+    Returns a unit vector.
+    """
+
+    if landmarks is None:
+        return (
+            0.0,
+            0.0,
+            0.0,
+        )
+
+    wrist_to_index = vector_between(
+        landmarks[WRIST],
+        landmarks[INDEX_MCP],
+    )
+
+    wrist_to_pinky = vector_between(
+        landmarks[WRIST],
+        landmarks[PINKY_MCP],
+    )
+
+    normal = cross_product(
+        wrist_to_index,
+        wrist_to_pinky,
+    )
+
+    return normalize_vector(
+        normal
+    )
+
+
+def calculate_palm_features(
+    left_hand,
+    right_hand,
+):
+    """
+    Describe palm orientation.
+
+    Returns 6 features:
+
+    left palm normal XYZ
+    +
+    right palm normal XYZ
+    """
+
+    left_normal = calculate_palm_normal(
+        left_hand
+    )
+
+    right_normal = calculate_palm_normal(
+        right_hand
+    )
+
+    return [
+        *left_normal,
+        *right_normal,
+    ]
+
+
+# =========================================================
+# Inter-hand geometry
 # =========================================================
 
 def calculate_inter_hand_features(
@@ -154,22 +603,28 @@ def calculate_inter_hand_features(
     right_hand,
 ):
     """
-    Describe the spatial relationship between the two hands.
+    Describe relationships between the two hands.
 
     Returns 18 features:
 
-    3  = normalized right-wrist position relative to left
-    5  = matching fingertip distances
-    10 = cross-fingertip distances
+    3  wrist relative position
+    5  matching fingertip distances
+    10 cross-fingertip distances
     """
 
-    # If either hand is unavailable, the relationship
-    # cannot be measured.
-    if left_hand is None or right_hand is None:
+    if (
+        left_hand is None
+        or right_hand is None
+    ):
         return [0.0] * 18
 
-    left_scale = get_hand_scale(left_hand)
-    right_scale = get_hand_scale(right_hand)
+    left_scale = get_hand_scale(
+        left_hand
+    )
+
+    right_scale = get_hand_scale(
+        right_hand
+    )
 
     average_scale = (
         left_scale + right_scale
@@ -181,11 +636,11 @@ def calculate_inter_hand_features(
     features = []
 
     # -----------------------------------------------------
-    # Wrist-to-wrist relationship
+    # Wrist relationship
     # -----------------------------------------------------
 
-    left_wrist = left_hand[0]
-    right_wrist = right_hand[0]
+    left_wrist = left_hand[WRIST]
+    right_wrist = right_hand[WRIST]
 
     features.extend(
         [
@@ -207,29 +662,20 @@ def calculate_inter_hand_features(
     )
 
     # -----------------------------------------------------
-    # Matching fingertip distances
-    #
-    # left thumb  <-> right thumb
-    # left index  <-> right index
-    # etc.
+    # Matching fingertips
     # -----------------------------------------------------
 
     for index in FINGERTIP_INDICES:
 
-        distance = distance_3d(
-            left_hand[index],
-            right_hand[index],
-        )
-
         features.append(
-            distance / average_scale
+            distance_3d(
+                left_hand[index],
+                right_hand[index],
+            ) / average_scale
         )
 
     # -----------------------------------------------------
     # Cross-fingertip relationships
-    #
-    # Each left fingertip compared with the neighboring
-    # important fingertips on the right hand.
     # -----------------------------------------------------
 
     cross_pairs = [
@@ -251,20 +697,18 @@ def calculate_inter_hand_features(
 
     for left_index, right_index in cross_pairs:
 
-        distance = distance_3d(
-            left_hand[left_index],
-            right_hand[right_index],
-        )
-
         features.append(
-            distance / average_scale
+            distance_3d(
+                left_hand[left_index],
+                right_hand[right_index],
+            ) / average_scale
         )
 
     return features
 
 
 # =========================================================
-# Visibility features
+# Visibility
 # =========================================================
 
 def create_visibility_features(
@@ -272,15 +716,14 @@ def create_visibility_features(
     right_status,
 ):
     """
-    Convert tracking states into numerical features.
+    One-hot encode:
 
-    Each hand gets three values:
+        visible
+        occluded
+        missing
 
-    visible
-    occluded
-    missing
-
-    Total = 6 features.
+    3 values per hand.
+    6 total.
     """
 
     valid_states = {
@@ -291,12 +734,12 @@ def create_visibility_features(
 
     if left_status not in valid_states:
         raise ValueError(
-            f"Invalid left hand status: {left_status}"
+            f"Invalid left status: {left_status}"
         )
 
     if right_status not in valid_states:
         raise ValueError(
-            f"Invalid right hand status: {right_status}"
+            f"Invalid right status: {right_status}"
         )
 
     features = []
@@ -308,9 +751,17 @@ def create_visibility_features(
 
         features.extend(
             [
-                1.0 if status == "visible" else 0.0,
-                1.0 if status == "occluded" else 0.0,
-                1.0 if status == "missing" else 0.0,
+                1.0
+                if status == "visible"
+                else 0.0,
+
+                1.0
+                if status == "occluded"
+                else 0.0,
+
+                1.0
+                if status == "missing"
+                else 0.0,
             ]
         )
 
@@ -325,25 +776,20 @@ def create_pose_features(
     pose_landmarks=None,
 ):
     """
-    Extract arm geometry from MediaPipe Pose.
+    Extract:
 
-    Uses:
-        left shoulder  = 11
-        right shoulder = 12
-        left elbow     = 13
-        right elbow    = 14
-        left wrist     = 15
-        right wrist    = 16
+        left shoulder
+        right shoulder
+        left elbow
+        right elbow
+        left wrist
+        right wrist
 
-    Coordinates are normalized relative to the midpoint
-    between the shoulders.
+    18 normalized XYZ coordinates
+    +
+    6 visibility values
 
-    Returns:
-        18 coordinate features
-        +
-        6 visibility features
-
-        = 24 features
+    = 24 features.
     """
 
     if pose_landmarks is None:
@@ -358,8 +804,13 @@ def create_pose_features(
         16,
     ]
 
-    left_shoulder = pose_landmarks[11]
-    right_shoulder = pose_landmarks[12]
+    left_shoulder = (
+        pose_landmarks[11]
+    )
+
+    right_shoulder = (
+        pose_landmarks[12]
+    )
 
     center_x = (
         left_shoulder.x
@@ -386,13 +837,12 @@ def create_pose_features(
 
     features = []
 
-    # -----------------------------------------------------
-    # Normalized coordinates
-    # -----------------------------------------------------
-
+    # Coordinates
     for index in required_indices:
 
-        landmark = pose_landmarks[index]
+        landmark = (
+            pose_landmarks[index]
+        )
 
         features.extend(
             [
@@ -413,16 +863,11 @@ def create_pose_features(
             ]
         )
 
-    # -----------------------------------------------------
     # Visibility
-    # -----------------------------------------------------
-
     for index in required_indices:
 
-        landmark = pose_landmarks[index]
-
         visibility = getattr(
-            landmark,
+            pose_landmarks[index],
             "visibility",
             0.0,
         )
@@ -435,7 +880,7 @@ def create_pose_features(
 
 
 # =========================================================
-# Final Ninja Vision feature vector
+# Complete Ninja Vision Feature Vector V2
 # =========================================================
 
 def create_gesture_features(
@@ -446,48 +891,69 @@ def create_gesture_features(
     pose_landmarks=None,
 ):
     """
-    Create the complete Ninja Vision feature vector.
+    NINJA VISION FEATURE VECTOR V2
 
-    Layout:
+    -------------------------------------------------------
+    BASE FEATURES
+    -------------------------------------------------------
 
-    Left hand landmarks:
-        63
+    Left normalized landmarks      63
+    Right normalized landmarks     63
 
-    Right hand landmarks:
-        63
+    Visibility                     6
+    Inter-hand geometry           18
+    Pose                           24
 
-    Hand visibility:
-        6
+    -------------------------------------------------------
+    ADVANCED FINGER GEOMETRY
+    -------------------------------------------------------
 
-    Inter-hand relationships:
-        18
+    Finger curl:
+        left                       20
+        right                      20
 
-    Pose / arm features:
-        24
+    Joint angles:
+        left                        8
+        right                       8
 
-    ----------------------------
+    Fingertip distances:
+        left                        5
+        right                       5
 
-    TOTAL:
-        174 features
+    Palm orientation               6
+
+    -------------------------------------------------------
+
+    TOTAL                         246
+
+    NOTE:
+    This intentionally favors a richer feature representation
+    before the real dataset is collected.
     """
 
+    features = []
+
     # -----------------------------------------------------
-    # Hand geometry
+    # Original hand coordinates
     # -----------------------------------------------------
 
-    left_features = normalize_hand_landmarks(
-        left_hand
+    features.extend(
+        normalize_hand_landmarks(
+            left_hand
+        )
     )
 
-    right_features = normalize_hand_landmarks(
-        right_hand
+    features.extend(
+        normalize_hand_landmarks(
+            right_hand
+        )
     )
 
     # -----------------------------------------------------
-    # Visibility
+    # Tracking visibility
     # -----------------------------------------------------
 
-    visibility_features = (
+    features.extend(
         create_visibility_features(
             left_status,
             right_status,
@@ -495,10 +961,10 @@ def create_gesture_features(
     )
 
     # -----------------------------------------------------
-    # Hand relationships
+    # Two-hand relationships
     # -----------------------------------------------------
 
-    relationship_features = (
+    features.extend(
         calculate_inter_hand_features(
             left_hand,
             right_hand,
@@ -509,31 +975,80 @@ def create_gesture_features(
     # Pose
     # -----------------------------------------------------
 
-    pose_features = create_pose_features(
-        pose_landmarks
+    features.extend(
+        create_pose_features(
+            pose_landmarks
+        )
     )
 
     # -----------------------------------------------------
-    # Combine
+    # Finger curl
     # -----------------------------------------------------
 
-    features = (
-        left_features
-        + right_features
-        + visibility_features
-        + relationship_features
-        + pose_features
+    features.extend(
+        calculate_finger_curl_features(
+            left_hand
+        )
+    )
+
+    features.extend(
+        calculate_finger_curl_features(
+            right_hand
+        )
+    )
+
+    # -----------------------------------------------------
+    # Joint angles
+    # -----------------------------------------------------
+
+    features.extend(
+        calculate_joint_angle_features(
+            left_hand
+        )
+    )
+
+    features.extend(
+        calculate_joint_angle_features(
+            right_hand
+        )
+    )
+
+    # -----------------------------------------------------
+    # Fingertip distances
+    # -----------------------------------------------------
+
+    features.extend(
+        calculate_fingertip_distance_features(
+            left_hand
+        )
+    )
+
+    features.extend(
+        calculate_fingertip_distance_features(
+            right_hand
+        )
+    )
+
+    # -----------------------------------------------------
+    # Palm orientation
+    # -----------------------------------------------------
+
+    features.extend(
+        calculate_palm_features(
+            left_hand,
+            right_hand,
+        )
     )
 
     # -----------------------------------------------------
     # Safety check
     # -----------------------------------------------------
 
-    expected_feature_count = 174
+    expected_feature_count = 246
 
     if len(features) != expected_feature_count:
         raise ValueError(
-            "Unexpected feature vector size. "
+            "Feature Vector V2 size mismatch. "
             f"Expected {expected_feature_count}, "
             f"received {len(features)}."
         )

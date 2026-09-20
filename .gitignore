@@ -182,3 +182,7 @@ vision/output/
 
 # Computer vision data
 vision/data/
+
+# Python cache
+__pycache__/
+*.pyc
